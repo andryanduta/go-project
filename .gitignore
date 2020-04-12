@@ -1,0 +1,15 @@
+# node modules
+/node_modules
+
+/go-project
+
+# go vendor
+/vendor
+
+# IDE config
+/.idea
+/.vscode
+.DS_Store
+
+# output of the go coverage tool
+*.out
