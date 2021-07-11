@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/jmoiron/sqlx"
 	"log"
 	"math/rand"
 	"strconv"
@@ -14,8 +13,9 @@ import (
 
 	"github.com/adg/go-project/src/util"
 
+	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
-	"github.com/orcaman/concurrent-map"
+	cmap "github.com/orcaman/concurrent-map"
 	"gopkg.in/eapache/go-resiliency.v1/breaker"
 	gcfg "gopkg.in/gcfg.v1"
 )

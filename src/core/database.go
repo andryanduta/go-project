@@ -44,7 +44,7 @@ func InitDBClient(dbs DBGlobalSetting, dbConfDir string, listAppName ...string) 
 				conf, err := postgresql.InitDatabaseConfig(dbConfDir + "postgresql.ini")
 				if err != nil {
 					errList = append(errList, "postgresql")
-					log.Println(err)
+					log.Println("[InitDBClient] postgresql.InitDatabaseConfig process failed ", err)
 				} else {
 					dbCfg.PostgreSQLDB = &conf
 					err = postgresql.NewDatabaseClientAll()
@@ -62,12 +62,12 @@ func InitDBClient(dbs DBGlobalSetting, dbConfDir string, listAppName ...string) 
 				conf, err := redis.InitDatabaseConfig(dbConfDir + "redis.ini")
 				if err != nil {
 					errList = append(errList, "redis")
-					log.Println(err)
+					log.Println("[InitDBClient] redis.InitDatabaseConfig process failed ", err)
 				} else {
 					dbCfg.RedisDB = &conf
 					err = redis.NewDatabaseClientAll()
 					if err != nil {
-						log.Println(err)
+						log.Println("[InitDBClient] redis.InitDatabaseConfig process failed ", err)
 						errList = append(errList, "redis")
 					}
 
@@ -80,14 +80,14 @@ func InitDBClient(dbs DBGlobalSetting, dbConfDir string, listAppName ...string) 
 			{
 				conf, err := nsq.NewNsqConfig(dbConfDir + "nsq.ini")
 				if err != nil {
-					log.Println(err)
+					log.Println("[InitDBClient] NewNsqConfig process failed ", err)
 					errList = append(errList, "nsq")
 				} else {
 					dbCfg.Nsq = conf
 					err = nsq.NewNsqProducerAll()
 					if err != nil {
 						errList = append(errList, "nsq")
-						log.Println(err)
+						log.Println("[InitDBClient] NewNsqConfig process failed ", err)
 					}
 				}
 			}

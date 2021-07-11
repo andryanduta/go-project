@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math/rand"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,7 +11,7 @@ import (
 	"github.com/adg/go-project/src/util"
 
 	redigo "github.com/garyburd/redigo/redis"
-	"github.com/orcaman/concurrent-map"
+	cmap "github.com/orcaman/concurrent-map"
 	"gopkg.in/eapache/go-resiliency.v1/breaker"
 	gcfg "gopkg.in/gcfg.v1"
 )
@@ -41,7 +39,6 @@ type (
 
 	ConnectionDetail struct {
 		Master       string
-		Slave        []string
 		IdleTimeout  int
 		DialTimeout  int
 		ReadTimeout  int
@@ -60,7 +57,6 @@ type (
 
 	DatabaseClientReplication struct {
 		Master *redigo.Pool
-		Slave  []*redigo.Pool
 	}
 
 	RuntimeSettingRepl map[string]*RuntimeSetting
@@ -126,25 +122,11 @@ func getReplication(sRepl []string) string {
 
 		if repl == "master" {
 			uds = false
-		} else {
-			if repl == "slave" {
-				uds = false
-			} else {
-				s := strings.Split(repl, "_")
-				if len(s) > 1 && s[0] == "slave" && s[1] != "" {
-					idx, err := strconv.Atoi(s[1])
-					if err == nil && idx > 0 {
-						// reconstruct string to prevent unwanted connection like slave_2_x
-						repl = fmt.Sprintf("%s_%s", s[0], s[1])
-						uds = false
-					}
-				}
-			}
 		}
 	}
 
 	if uds {
-		// default connection "master" or "slave"
+		// default connection "master"
 		repl = "master"
 	}
 
@@ -323,44 +305,8 @@ func getPool(clientName string, sRepl ...string) (*redigo.Pool, error) {
 		return nil, ErrDisableConnection
 	}
 
-	if repl == "master" || len(cli.Slave) == 0 {
+	if repl == "master" {
 		pool = cli.Master
-	} else {
-		s := strings.Split(repl, "_")
-
-		if s[0] != "slave" {
-			return nil, ErrNoConnection
-		}
-
-		idx := 0
-		if len(s) > 1 {
-			slaveNum, err := strconv.Atoi(s[1])
-			if err == nil {
-				idx = slaveNum - 1
-			}
-		} else {
-			r := rand.New(rand.NewSource(time.Now().UnixNano()))
-			idx = r.Intn(len(cli.Slave))
-		}
-
-		if len(cli.Slave) <= idx {
-			idx = len(cli.Slave) - 1
-		}
-
-		if idx < 0 {
-			return nil, ErrNoConnection
-		}
-
-		// if available slave client greater than 1, slave connection will have postfix value. ex: slave_1
-		// we need to check if random number generation slave connection still open
-		if len(cli.Slave) > 0 {
-			multiSlaveRepl := fmt.Sprintf("slave_%d", idx+1)
-			if !isActiveHost(clientName, multiSlaveRepl) {
-				return nil, ErrDisableConnection
-			}
-		}
-
-		pool = cli.Slave[idx]
 	}
 
 	if pool == nil {
@@ -370,18 +316,16 @@ func getPool(clientName string, sRepl ...string) (*redigo.Pool, error) {
 	return pool, nil
 }
 
-// NewDatabaseClient returns new database client for a given client name along with all of its replications (master and slave).
+// NewDatabaseClient returns new database client for a given client name along with all of its replications (master only).
 // When flag reload is set, the current connection for specified replication names will be closed before new connection is made.
-// If no replication names are supplied, the master and all of its slaves will be reloaded.
+// If no replication names are supplied, the master will be reloaded.
 func NewDatabaseClient(clientName string, reload bool, repNames ...string) DatabaseClientReplication {
 	GlobalLock.Lock()
 	defer GlobalLock.Unlock()
 
 	// register heartbeat
+	// currently, redis only available on master
 	defer RegisterHeartBeat(clientName, "master", 0)
-	if lenSlaves := len(DB.Config.Connection[clientName].Slave); lenSlaves > 0 {
-		defer RegisterHeartBeat(clientName, "slave", lenSlaves)
-	}
 
 	isRepReload := make(map[string]bool) // Marker for replication that needs to be reloaded.
 	if reload {
@@ -394,23 +338,13 @@ func NewDatabaseClient(clientName string, reload bool, repNames ...string) Datab
 			} else {
 				isRepReload["master"] = false
 			}
-
-			for i, pool := range cli.Slave {
-				slaveName := fmt.Sprintf("slave_%d", i+1)
-				if len(repNames) == 0 || util.InArrayString(slaveName, repNames) {
-					pool.Close()
-					isRepReload[slaveName] = true
-				} else {
-					isRepReload[slaveName] = false
-				}
-			}
 		}
 	}
 
 	repl := DatabaseClientReplication{} // This will hold the new replications
 
 	// Create/reuse connection
-	// If flag reload is not set, create new connection for master and all of it slaves.
+	// If flag reload is not set, create new connection for master.
 	// If it doesn't, create new replication that need to be reloaded.
 	if !reload || isRepReload["master"] {
 		// Master need to be reloaded, create new connection for it.
@@ -421,21 +355,7 @@ func NewDatabaseClient(clientName string, reload bool, repNames ...string) Datab
 		repl.Master = DB.ClientList.Name[clientName].Master
 	}
 
-	clientSlave := make([]*redigo.Pool, 0)
-	for i, hostSlave := range DB.Config.Connection[clientName].Slave {
-		slaveName := fmt.Sprintf("slave_%d", i+1)
-		if !reload || isRepReload[slaveName] {
-			// This slave need to be reloaded, so create connection for it.
-			clientSlave = append(clientSlave, CreateConnection(clientName, hostSlave))
-		} else {
-			// Reuse the connection since it doesn't need to be reloaded.
-			clientSlave = append(clientSlave, DB.ClientList.Name[clientName].Slave[i])
-		}
-	}
-	repl.Slave = clientSlave
-
 	DB.ClientList.Name[clientName] = repl
-
 	return repl
 }
 
